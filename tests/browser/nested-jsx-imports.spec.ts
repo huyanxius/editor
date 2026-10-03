@@ -1,17 +1,37 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { fromMarkdown } from 'mdast-util-from-markdown'
+import { mdxFromMarkdown } from 'mdast-util-mdx'
+import { directiveFromMarkdown } from 'mdast-util-directive'
+import { gfmTableFromMarkdown } from 'mdast-util-gfm-table'
+import { mdxjs } from 'micromark-extension-mdxjs'
+import { directive } from 'micromark-extension-directive'
+import { gfmTable } from 'micromark-extension-gfm-table'
 
 async function placeCaretAtEnd(element: Locator) {
-  await element.evaluate((element) => {
-    element.closest<HTMLElement>('[contenteditable="true"]')!.focus()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    range.collapse(false)
-    const selection = window.getSelection()!
-    selection.removeAllRanges()
-    selection.addRange(range)
-    document.dispatchEvent(new Event('selectionchange', { bubbles: true }))
+  await element.click()
+  const editable = element.locator('xpath=ancestor-or-self::*[@contenteditable="true"][1]')
+  await expect(editable).toBeFocused()
+  await editable.press('End')
+}
+
+function withoutPositions(value: unknown, inEstree = false): unknown {
+  if (Array.isArray(value)) return value.map((item: unknown) => withoutPositions(item, inEstree))
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== 'position' && !(inEstree && ['start', 'end', 'loc', 'range'].includes(key)))
+      .map(([key, child]) => [key, withoutPositions(child, inEstree || key === 'estree')])
+  )
+}
+
+function parseContent(markdown: string) {
+  const tree = fromMarkdown(markdown, {
+    extensions: [mdxjs(), directive(), gfmTable()],
+    mdastExtensions: [mdxFromMarkdown(), directiveFromMarkdown(), gfmTableFromMarkdown()]
   })
-  await expect(element.locator('xpath=ancestor-or-self::*[@contenteditable="true"][1]')).toBeFocused()
+  // Only source coordinates change when blank lines normalize on reload. Keep
+  // all nodes, attributes, imports, parser metadata, and semantic list starts.
+  return withoutPositions(tree)
 }
 
 async function readMarkdown(page: Page) {
@@ -41,7 +61,7 @@ test('inserting JSX into an admonition exports its import at the document root',
   expect(markdown).toContain(":::tip\nimport Existing from '@existing'")
   expect(occurrences(markdown, "import Zazz from '@zazz'")).toBe(1)
   await page.getByRole('button', { name: 'Reload saved Markdown', exact: true }).click()
-  expect(await readMarkdown(page)).toBe(markdown)
+  expect(parseContent(await readMarkdown(page))).toEqual(parseContent(markdown))
 })
 
 test('root and nested references share one import after repeated insertion and reload', async ({ page }) => {
@@ -60,7 +80,7 @@ test('root and nested references share one import after repeated insertion and r
   expect(occurrences(markdown, '<Zazz />')).toBe(2)
   expect(occurrences(markdown, "import Zazz from '@zazz'")).toBe(1)
   await page.getByRole('button', { name: 'Reload saved Markdown', exact: true }).click()
-  expect(await readMarkdown(page)).toBe(markdown)
+  expect(parseContent(await readMarkdown(page))).toEqual(parseContent(markdown))
 })
 
 test('inserting inline JSX into a table preserves the cell and imports the component once', async ({ page }) => {
@@ -75,5 +95,5 @@ test('inserting inline JSX into a table preserves the cell and imports the compo
   expect(occurrences(markdown, "import { Badge } from '@components'")).toBe(1)
   expect(errors).toEqual([])
   await page.getByRole('button', { name: 'Reload saved Markdown', exact: true }).click()
-  expect(await readMarkdown(page)).toBe(markdown)
+  expect(parseContent(await readMarkdown(page))).toEqual(parseContent(markdown))
 })
