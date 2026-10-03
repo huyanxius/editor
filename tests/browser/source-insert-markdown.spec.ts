@@ -16,6 +16,12 @@ test.afterEach(({ page }) => {
   expect(runtimeErrors.get(page)).toEqual([])
 })
 
+async function redoInEditor(page: Page, editor: Locator) {
+  // Match CodeMirror's primary platform-specific historyKeymap binding.
+  const shortcut = await page.evaluate(() => (/Mac/.test(navigator.platform) ? 'Meta+Shift+Z' : 'Control+y'))
+  await editor.press(shortcut)
+}
+
 async function readMarkdown(page: Page) {
   await page.getByRole('button', { name: 'Get Markdown', exact: true }).click()
   return (await page.getByLabel('Current markdown').textContent()) ?? ''
@@ -63,7 +69,7 @@ for (const mode of ['source', 'diff'] as const) {
       expect(await readMarkdown(page)).toBe('before **replacement** after')
       await editor.press('ControlOrMeta+z')
       await expect(editor).toHaveText('before TARGET after')
-      await editor.press('ControlOrMeta+Shift+z')
+      await redoInEditor(page, editor)
       await expect(editor).toHaveText('before **replacement** after')
       await page.getByRole('radio', { name: 'Rich text', exact: true }).click()
       await expect(page.locator('.mdxeditor-rich-text-editor strong')).toHaveText('replacement')
@@ -79,7 +85,7 @@ for (const mode of ['source', 'diff'] as const) {
       await expect(editor).toHaveText('draftINSERTINSERT')
       await editor.press('ControlOrMeta+z')
       await expect(editor).toHaveText('draftINSERT')
-      await editor.press('ControlOrMeta+Shift+z')
+      await redoInEditor(page, editor)
       await expect(editor).toHaveText('draftINSERTINSERT')
       await page.getByRole('radio', { name: 'Rich text', exact: true }).click()
       await expect(page.locator('.mdxeditor-rich-text-editor p')).toHaveText('draftINSERTINSERT')
