@@ -51,7 +51,10 @@ test('keeps language selection and deletion accessible from the keyboard', async
   await expect(language).toBeFocused()
   await page.keyboard.press('Space')
   await expect(page.getByRole('listbox')).toBeVisible()
+  await expect(page.getByRole('option', { name: 'JavaScript', exact: true })).toBeFocused()
   await page.keyboard.press('End')
+  // Radix defers moving focus after navigation keys with setTimeout.
+  await expect(page.getByRole('option', { name: 'Plain text', exact: true })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(language).toHaveText('Plain text')
   await expect(page.getByLabel('Current Markdown')).toContainText('```txt')
