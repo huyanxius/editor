@@ -1,0 +1,98 @@
+name: Validate issue 748 red-green
+
+on:
+  push:
+    branches:
+      - ci/748-toolbar-red-green
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue748-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-regression:
+    if: github.repository == 'huyanxius/editor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: true
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24.19.0'
+
+      - name: Install locked dependencies and browsers
+        run: |
+          npm ci
+          npm exec -- playwright install --with-deps chromium firefox webkit
+          git rev-parse HEAD
+          node --version
+          npm --version
+          npm exec -- playwright --version
+          sha256sum package-lock.json
+
+      - name: Confirm the original layout fails the overlap assertion in all three browsers
+        shell: bash
+        run: |
+          git show 122347cff8af5e9e1291b52789d22ed3ba0dc2ba:src/styles/ui.module.css > src/styles/ui.module.css
+          set +e
+          ISSUE748_REPORT=baseline-results.json npm exec -- playwright test --config=playwright.issue748.config.ts --grep 'at 800px'
+          status=$?
+          set -e
+          git restore --source=HEAD -- src/styles/ui.module.css
+          test "$status" -eq 1
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const report = JSON.parse(readFileSync('baseline-results.json', 'utf8'))
+          assert.deepEqual(report.errors, [], 'No setup or runner errors are allowed')
+          const collect = (suites) => suites.flatMap((suite) => [
+            ...suite.specs.flatMap((spec) => spec.tests),
+            ...collect(suite.suites ?? [])
+          ])
+          const tests = collect(report.suites)
+          assert.equal(tests.length, 3)
+          assert.deepEqual(tests.map((test) => test.projectName).sort(), ['chromium', 'firefox', 'webkit'])
+          for (const test of tests) {
+            assert.equal(test.status, 'unexpected')
+            assert.equal(test.results.length, 1)
+            const result = test.results[0]
+            assert.equal(result.status, 'failed')
+            assert.equal(result.errors.length, 1)
+            assert.match(result.errors[0].message, /the toolbar must leave the entire first code line unobstructed/)
+          }
+          assert.equal(report.stats.unexpected, 3)
+          assert.equal(report.stats.expected, 0)
+          assert.equal(report.stats.skipped, 0)
+          assert.equal(report.stats.flaky, 0)
+          console.log('BASELINE VERIFIED: the overlap assertion failed in Chromium, Firefox, and WebKit.')
+          console.log(JSON.stringify(report.stats))
+          NODE
+
+      - name: Verify the candidate layout and keyboard and touch interactions
+        shell: bash
+        run: |
+          git diff --exit-code -- src/styles/ui.module.css
+          ISSUE748_REPORT=candidate-results.json npm exec -- playwright test --config=playwright.issue748.config.ts
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const report = JSON.parse(readFileSync('candidate-results.json', 'utf8'))
+          assert.deepEqual(report.errors, [])
+          assert.equal(report.stats.expected, 12)
+          assert.equal(report.stats.unexpected, 0)
+          assert.equal(report.stats.skipped, 0)
+          assert.equal(report.stats.flaky, 0)
+          console.log('CANDIDATE VERIFIED: all 12 browser layout and interaction cases passed.')
+          console.log(JSON.stringify(report.stats))
+          NODE
