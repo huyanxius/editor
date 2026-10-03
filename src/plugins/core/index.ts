@@ -414,6 +414,9 @@ export const setMarkdown$ = Signal<string>((r) => {
  */
 export const insertMarkdown$ = Signal<string>((r) => {
   r.sub(r.pipe(insertMarkdown$, withLatestFrom(activeEditor$, inFocus$)), ([markdownToInsert, editor, inFocus]) => {
+    if (r.getValue(viewMode$) !== 'rich-text') {
+      return
+    }
     editor?.update(() => {
       const selection = $getSelection()
       if (selection !== null) {

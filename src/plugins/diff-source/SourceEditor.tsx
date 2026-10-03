@@ -1,3 +1,4 @@
+import { isolateHistory } from '@codemirror/commands'
 import { markdown as markdownLanguageSupport } from '@codemirror/lang-markdown'
 import { EditorState, Extension } from '@codemirror/state'
 import { EditorView, lineNumbers } from '@codemirror/view'
@@ -5,8 +6,8 @@ import { basicLight } from 'cm6-theme-basic-light'
 import { basicSetup } from 'codemirror'
 import React from 'react'
 import { cmExtensions$ } from '.'
-import { markdown$, markdownSourceEditorValue$, onBlur$, readOnly$ } from '../core'
-import { useCellValues, usePublisher } from '@mdxeditor/gurx'
+import { insertMarkdown$, markdown$, markdownSourceEditorValue$, onBlur$, readOnly$, viewMode$ } from '../core'
+import { useCellValues, usePublisher, useRealm } from '@mdxeditor/gurx'
 
 export const COMMON_STATE_CONFIG_EXTENSIONS: Extension[] = [
   basicSetup,
@@ -17,10 +18,23 @@ export const COMMON_STATE_CONFIG_EXTENSIONS: Extension[] = [
 ]
 
 export const SourceEditor = () => {
+  const realm = useRealm()
   const [markdown, readOnly, cmExtensions] = useCellValues(markdown$, readOnly$, cmExtensions$)
   const updateMarkdown = usePublisher(markdownSourceEditorValue$)
   const triggerOnBlur = usePublisher(onBlur$)
   const editorViewRef = React.useRef<EditorView | null>(null)
+
+  React.useEffect(() => {
+    return realm.sub(insertMarkdown$, (markdownToInsert) => {
+      const view = editorViewRef.current
+      if (view && realm.getValue(viewMode$) === 'source') {
+        view.dispatch(view.state.replaceSelection(markdownToInsert), {
+          annotations: isolateHistory.of('full'),
+          userEvent: 'input.paste'
+        })
+      }
+    })
+  }, [realm])
 
   const ref = React.useCallback(
     (el: HTMLDivElement | null) => {

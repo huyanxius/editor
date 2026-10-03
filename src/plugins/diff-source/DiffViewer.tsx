@@ -1,7 +1,8 @@
+import { isolateHistory } from '@codemirror/commands'
 import React from 'react'
 
 import { cmExtensions$, diffMarkdown$, readOnlyDiff$ } from '.'
-import { markdown$, markdownSourceEditorValue$, onBlur$, readOnly$ } from '../core'
+import { insertMarkdown$, markdown$, markdownSourceEditorValue$, onBlur$, readOnly$, viewMode$ } from '../core'
 
 import { MergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
@@ -23,6 +24,18 @@ export const DiffViewer: React.FC = () => {
   const cmMergeViewRef = React.useRef<MergeView | null>(null)
   const cmExtensions = useCellValue(cmExtensions$)
   const triggerOnBlur = usePublisher(onBlur$)
+
+  React.useEffect(() => {
+    return realm.sub(insertMarkdown$, (markdownToInsert) => {
+      const view = cmMergeViewRef.current?.b
+      if (view && realm.getValue(viewMode$) === 'diff') {
+        view.dispatch(view.state.replaceSelection(markdownToInsert), {
+          annotations: isolateHistory.of('full'),
+          userEvent: 'input.paste'
+        })
+      }
+    })
+  }, [realm])
 
   React.useEffect(() => {
     return realm.sub(diffMarkdown$, (newDiffMarkdown) => {

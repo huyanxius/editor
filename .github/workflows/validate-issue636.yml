@@ -1,0 +1,107 @@
+name: Validate issue 636 red-green
+
+on:
+  push:
+    branches:
+      - ci/636-source-insert-red-green
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue636-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-regression:
+    if: github.repository == 'huyanxius/editor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: true
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24.19.0'
+
+      - name: Install locked dependencies and browsers
+        run: |
+          npm ci
+          npm exec -- playwright install --with-deps chromium firefox webkit
+          git rev-parse HEAD
+          node --version
+          npm --version
+          npm exec -- playwright --version
+          sha256sum package-lock.json
+
+      - name: Check types, lint, unit tests, and build
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:once -- --maxWorkers=2 --minWorkers=1
+          npm run build
+
+      - name: Confirm original source and diff insertion loses current edits in all browsers
+        shell: bash
+        run: |
+          for file in src/plugins/core/index.ts src/plugins/diff-source/SourceEditor.tsx src/plugins/diff-source/DiffViewer.tsx; do
+            git show "122347cff8af5e9e1291b52789d22ed3ba0dc2ba:$file" > "$file"
+          done
+          set +e
+          ISSUE636_REPORT=baseline-results.json npm exec -- playwright test --config=playwright.issue636.config.ts --grep 'preserves current edits'
+          status=$?
+          set -e
+          git restore --source=HEAD -- src/plugins/core/index.ts src/plugins/diff-source/SourceEditor.tsx src/plugins/diff-source/DiffViewer.tsx
+          test "$status" -eq 1
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const report = JSON.parse(readFileSync('baseline-results.json', 'utf8'))
+          assert.deepEqual(report.errors, [], 'No setup or runner errors are allowed')
+          const collect = (suites) => suites.flatMap((suite) => [
+            ...suite.specs.flatMap((spec) => spec.tests),
+            ...collect(suite.suites ?? [])
+          ])
+          const tests = collect(report.suites)
+          assert.equal(tests.length, 6)
+          assert.deepEqual(tests.map((test) => test.projectName).sort(), ['chromium', 'chromium', 'firefox', 'firefox', 'webkit', 'webkit'])
+          for (const test of tests) {
+            assert.equal(test.status, 'unexpected')
+            assert.equal(test.results.length, 1)
+            const result = test.results[0]
+            assert.equal(result.status, 'failed')
+            assert.equal(result.errors.length, 1)
+            assert.match(result.errors[0].message, /insertion must preserve the current source edits/)
+          }
+          assert.equal(report.stats.unexpected, 6)
+          assert.equal(report.stats.expected, 0)
+          assert.equal(report.stats.skipped, 0)
+          assert.equal(report.stats.flaky, 0)
+          console.log('BASELINE VERIFIED: source and diff insertion both lose current edits in Chromium, Firefox, and WebKit.')
+          console.log(JSON.stringify(report.stats))
+          NODE
+
+      - name: Verify source and diff insertion, selection, undo, and mode changes
+        shell: bash
+        run: |
+          git diff --exit-code -- src/plugins/core/index.ts src/plugins/diff-source/SourceEditor.tsx src/plugins/diff-source/DiffViewer.tsx
+          ISSUE636_REPORT=candidate-results.json npm exec -- playwright test --config=playwright.issue636.config.ts
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const report = JSON.parse(readFileSync('candidate-results.json', 'utf8'))
+          assert.deepEqual(report.errors, [])
+          assert.equal(report.stats.expected, 18)
+          assert.equal(report.stats.unexpected, 0)
+          assert.equal(report.stats.skipped, 0)
+          assert.equal(report.stats.flaky, 0)
+          console.log('CANDIDATE VERIFIED: all 18 source/diff insertion, selection, undo, and mode-change cases passed.')
+          console.log(JSON.stringify(report.stats))
+          NODE
