@@ -46,6 +46,17 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Insert Zazz', exact: true })).toBeVisible()
 })
 
+test('source-backed wildcards preserve nested imports and do not import intrinsic images on save and reload', async ({ page }) => {
+  const markdown = await readMarkdown(page)
+  expect(markdown).toContain('Nested image')
+  expect(markdown).toContain(":::tip\nimport Existing from '@existing'")
+  expect(occurrences(markdown, "import Existing from '@existing'")).toBe(1)
+  expect(markdown).not.toContain('@fallback')
+  expect(markdown).not.toMatch(/import[^\n]*\bimg\b/)
+  await page.getByRole('button', { name: 'Reload saved Markdown', exact: true }).click()
+  expect(parseContent(await readMarkdown(page))).toEqual(parseContent(markdown))
+})
+
 test('inserting JSX into an admonition exports its import at the document root', async ({ page }) => {
   await placeCaretAtEnd(
     page

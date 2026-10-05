@@ -96,10 +96,10 @@ jobs:
           import { readFileSync } from 'node:fs'
           const report = JSON.parse(readFileSync('candidate-results.json', 'utf8'))
           assert.deepEqual(report.errors, [])
-          assert.equal(report.stats.expected, 9)
+          assert.equal(report.stats.expected, 12)
           assert.equal(report.stats.unexpected, 0)
           assert.equal(report.stats.skipped, 0)
           assert.equal(report.stats.flaky, 0)
-          console.log('CANDIDATE VERIFIED: all 9 nested JSX insertion and save/reload cases passed.')
+          console.log('CANDIDATE VERIFIED: all 12 nested JSX insertion and save/reload cases passed.')
           console.log(JSON.stringify(report.stats))
           NODE
