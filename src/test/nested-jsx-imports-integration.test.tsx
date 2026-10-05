@@ -71,6 +71,74 @@ it('imports a JSX component inserted into an admonition at the document root', a
   expect(ref.current?.getMarkdown()).toMatch(/^import Zazz from '@zazz'/)
 })
 
+it.each(['exact', 'wildcard'] as const)(
+  'preserves one nested declaration with a source-backed %s descriptor after save and reload',
+  async (kind) => {
+    let nestedEditor: LexicalEditor | null = null
+    function CaptureNestedEditor() {
+      const [editor] = useLexicalComposerContext()
+      nestedEditor ??= editor
+      return null
+    }
+    const capture = realmPlugin({
+      init: (realm) => {
+        realm.pub(addNestedEditorChild$, CaptureNestedEditor)
+      }
+    })
+    const ref = React.createRef<MDXEditorMethods>()
+    const { container } = render(
+      <MDXEditor
+        ref={ref}
+        markdown={":::tip\nimport Existing from '@existing'\n\n<Existing />\n:::"}
+        plugins={[
+          capture(),
+          directivesPlugin({ directiveDescriptors: [AdmonitionDirectiveDescriptor] }),
+          jsxPlugin({
+            jsxComponentDescriptors: [
+              { name: 'Zazz', kind: 'flow', source: '@zazz', defaultExport: true, props: [], hasChildren: false, Editor: GenericJsxEditor },
+              {
+                name: kind === 'exact' ? 'Existing' : '*',
+                kind: 'flow',
+                source: kind === 'exact' ? '@existing' : '@fallback',
+                defaultExport: kind === 'exact',
+                props: [],
+                hasChildren: false,
+                Editor: GenericJsxEditor
+              }
+            ]
+          })
+        ]}
+      />
+    )
+    await waitFor(() => {
+      expect(nestedEditor).not.toBeNull()
+    })
+    act(() => {
+      nestedEditor!.update(
+        () => {
+          $getRoot().append($createLexicalJsxNode({ type: 'mdxJsxFlowElement', name: 'Zazz', attributes: [], children: [] }))
+        },
+        { discrete: true }
+      )
+    })
+    fireEvent.blur(container.querySelectorAll('[contenteditable="true"]')[1])
+    await waitFor(() => {
+      expect(ref.current?.getMarkdown()).toContain('<Zazz />')
+    })
+    const saved = ref.current!.getMarkdown()
+    expect(saved).toMatch(/^import Zazz from '@zazz'/)
+    expect(saved).toContain(":::tip\nimport Existing from '@existing'")
+    expect(saved.match(/import Existing/g)).toHaveLength(1)
+    expect(saved).not.toContain('@fallback')
+    act(() => {
+      ref.current!.setMarkdown(saved)
+    })
+    await waitFor(() => {
+      expect(ref.current!.getMarkdown()).toBe(saved)
+    })
+  }
+)
+
 it('preserves existing nested imports when a new component is inserted and the document is reloaded', async () => {
   let nestedEditor: LexicalEditor | null = null
   function CaptureNestedEditor() {

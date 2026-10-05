@@ -12,6 +12,9 @@ import { LexicalJsxVisitor } from '../plugins/jsx/LexicalJsxVisitor'
 import type { JsxComponentDescriptor } from '../plugins/jsx'
 import { $createTableNode, TableNode } from '../plugins/table/TableNode'
 import { LexicalTableVisitor } from '../plugins/table/LexicalTableVisitor'
+import { fromMarkdown } from 'mdast-util-from-markdown'
+import { mdxFromMarkdown } from 'mdast-util-mdx'
+import { mdxjs } from 'micromark-extension-mdxjs'
 
 function jsx(name: string | null, children: Mdast.BlockContent[] = []): MdxJsxFlowElement {
   return { type: 'mdxJsxFlowElement', name, attributes: [], children }
@@ -64,7 +67,85 @@ function importValues(root: Mdast.Root) {
   return root.children.filter((node) => node.type === 'mdxjsEsm').map((node) => node.value)
 }
 
+function parsedMdx(markdown: string) {
+  return fromMarkdown(markdown, { extensions: [mdxjs()], mdastExtensions: [mdxFromMarkdown()] }).children
+}
+
 describe('imports from nested MDAST subtrees', () => {
+  it('does not import intrinsic images from a stored directive with a source-backed wildcard', () => {
+    const result = exportNodes(() => [admonition([jsx('img')])], [descriptor('*', '@components')])
+    expect(importValues(result)).toEqual([])
+  })
+
+  it('does not import intrinsic images from a stored table cell with a source-backed wildcard', () => {
+    const result = exportNodes(
+      () => [
+        $createTableNode({
+          type: 'table',
+          children: [
+            { type: 'tableRow', children: [{ type: 'tableCell', children: [{ ...jsx('img'), type: 'mdxJsxTextElement', children: [] }] }] }
+          ]
+        })
+      ],
+      [descriptor('*', '@components')]
+    )
+    expect(importValues(result)).toEqual([])
+  })
+
+  it.each([
+    ['exact', [descriptor('Existing', '@descriptor', true)]],
+    ['wildcard', [descriptor('*', '@fallback')]]
+  ] as const)('does not regenerate a preserved nested import with a source-backed %s descriptor', (_kind, descriptors) => {
+    const children = parsedMdx("import Existing from '@existing'\n\n<Existing />")
+    const result = exportNodes(() => [admonition(children)], [...descriptors])
+    expect(importValues(result)).toEqual([])
+    expect(result.children[0]).toMatchObject({ type: 'containerDirective', children })
+  })
+
+  it('deduplicates imports reconstructed by a nested editor without ESTree metadata', () => {
+    const existingImport = { type: 'mdxjsEsm' as const, value: "import Existing from '@existing'" }
+    const result = exportNodes(() => [admonition([existingImport, jsx('Existing')])], [descriptor('*', '@fallback')])
+    expect(importValues(result)).toEqual([])
+    expect(result.children[0]).toMatchObject({ children: [existingImport, jsx('Existing')] })
+  })
+
+  it('uses local bindings from named aliases and namespace imports without rewriting their declarations', () => {
+    const children = parsedMdx(
+      "import { Original as Existing } from '@existing'\nimport * as UI from '@ui'\n\n<Existing />\n\n<UI.Badge />"
+    )
+    const result = exportNodes(() => [admonition(children)], [descriptor('*', '@fallback')])
+    expect(importValues(result)).toEqual([])
+    expect(result.children[0]).toMatchObject({ children })
+  })
+
+  it('deduplicates a root reference against a preserved nested module binding', () => {
+    const children = parsedMdx("import Existing from '@existing'\n\n<Existing />")
+    const result = exportNodes(
+      () => [$createLexicalJsxNode(jsx('Existing')), admonition(children)],
+      [descriptor('Existing', '@descriptor', true)]
+    )
+    expect(importValues(result)).toEqual([])
+    expect(result.children[1]).toMatchObject({ children })
+  })
+
+  it('keeps generating imports for unrelated components beside preserved ESM and intrinsic images', () => {
+    const children = [...parsedMdx("import Existing from '@existing'\n\n<Existing />"), jsx('img'), jsx('Fresh'), jsx('Img')]
+    const result = exportNodes(() => [admonition(children)], [descriptor('*', '@fallback')])
+    expect(importValues(result)).toEqual(["import { Fresh, Img } from '@fallback'"])
+  })
+
+  it('does not treat side-effect imports or export declarations as imported component bindings', () => {
+    const children = [...parsedMdx("import '@side-effect'\nexport const Fresh = 1"), jsx('Fresh')]
+    const result = exportNodes(() => [admonition(children)], [descriptor('Fresh', '@fresh')])
+    expect(importValues(result)).toEqual(["import { Fresh } from '@fresh'"])
+  })
+
+  it('keeps programmatically supplied invalid ESM unchanged instead of introducing export validation', () => {
+    const invalidEsm = { type: 'mdxjsEsm' as const, value: 'import not valid MDX' }
+    const result = exportNodes(() => [admonition([invalidEsm])], [])
+    expect(result.children[0]).toMatchObject({ children: [invalidEsm] })
+  })
+
   it('imports a default JSX component inside an admonition at the document root', () => {
     const result = exportNodes(() => [admonition([jsx('Zazz')])], [descriptor('Zazz', '@zazz', true)])
     expect(importValues(result)).toEqual(["import Zazz from '@zazz'"])

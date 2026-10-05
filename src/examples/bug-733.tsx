@@ -5,6 +5,7 @@ import { directivesPlugin } from '../plugins/directives'
 import { GenericJsxEditor } from '../jsx-editors/GenericJsxEditor'
 import { insertJsx$, jsxPlugin } from '../plugins/jsx'
 import { tablePlugin } from '../plugins/table'
+import { imagePlugin } from '../plugins/image'
 import { toolbarPlugin } from '../plugins/toolbar'
 import { Button } from '../plugins/toolbar/primitives/toolbar'
 import { usePublisher } from '@mdxeditor/gurx'
@@ -15,6 +16,8 @@ const initialMarkdown = `Root content
 import Existing from '@existing'
 
 Admonition content <Existing />
+
+<img src="nested-image.png" alt="Nested image" />
 :::
 
 | Header |
@@ -58,11 +61,12 @@ export const NestedJsxImports = () => {
         plugins={[
           directivesPlugin({ directiveDescriptors: [AdmonitionDirectiveDescriptor] }),
           tablePlugin(),
+          imagePlugin(),
           jsxPlugin({
             jsxComponentDescriptors: [
               { name: 'Zazz', kind: 'flow', source: '@zazz', defaultExport: true, props: [], hasChildren: false, Editor: GenericJsxEditor },
               { name: 'Badge', kind: 'text', source: '@components', props: [], hasChildren: false, Editor: GenericJsxEditor },
-              { name: '*', kind: 'text', props: [], hasChildren: false, Editor: GenericJsxEditor }
+              { name: '*', kind: 'text', source: '@fallback', props: [], hasChildren: false, Editor: GenericJsxEditor }
             ]
           }),
           toolbarPlugin({ toolbarContents: InsertComponents })
