@@ -8,6 +8,7 @@ import { ImportStatement } from './importMarkdownToLexical'
 import { isMdastHTMLNode } from './plugins/core/MdastHTMLNode'
 import type { JsxComponentDescriptor } from './plugins/jsx'
 import { mergeStyleAttributes } from './utils/mergeStyleAttributes'
+import type { Pattern } from 'estree'
 
 // Keep this as an interface so API Extractor emits the package-root import.
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -63,7 +64,7 @@ export interface LexicalExportVisitor<LN extends LexicalNode, UN extends Mdast.N
        * @param componentName - the name of the component that has to be imported.
        * @see {@link JsxComponentDescriptor}
        */
-      registerReferredComponent(componentName: string, importStatement?: ImportStatement): void
+      registerReferredComponent(componentName: string | null, importStatement?: ImportStatement): void
       /**
        * visits the specified lexical node
        */
@@ -126,7 +127,10 @@ export function exportLexicalTreeToMdast({
 
   visit(root, null)
 
-  function registerReferredComponent(componentName: string, importStatement?: ImportStatement) {
+  function registerReferredComponent(componentName: string | null, importStatement?: ImportStatement) {
+    if (componentName === null) {
+      return
+    }
     referredComponents.add(componentName)
     if (importStatement) {
       knownImportSources.set(componentName, { ...importStatement })
@@ -210,9 +214,33 @@ export function exportLexicalTreeToMdast({
   }
 
   const typedRoot = unistRoot as Mdast.Root
-  const preservedImportBindings = new Set<string>()
+  const preservedBindings = new Set<string>()
 
-  const collectPreservedImports = (node: Mdast.Nodes) => {
+  const collectPatternBindings = (pattern: Pattern) => {
+    switch (pattern.type) {
+      case 'Identifier':
+        preservedBindings.add(pattern.name)
+        break
+      case 'ObjectPattern':
+        for (const property of pattern.properties) {
+          collectPatternBindings(property.type === 'RestElement' ? property.argument : property.value)
+        }
+        break
+      case 'ArrayPattern':
+        for (const element of pattern.elements) {
+          if (element) collectPatternBindings(element)
+        }
+        break
+      case 'AssignmentPattern':
+        collectPatternBindings(pattern.left)
+        break
+      case 'RestElement':
+        collectPatternBindings(pattern.argument)
+        break
+    }
+  }
+
+  const collectPreservedBindings = (node: Mdast.Nodes) => {
     if (node.type === 'mdxjsEsm') {
       let statements = node.data?.estree?.body
       if (!statements) {
@@ -231,16 +259,25 @@ export function exportLexicalTreeToMdast({
       for (const statement of statements) {
         if (statement.type === 'ImportDeclaration') {
           for (const specifier of statement.specifiers) {
-            preservedImportBindings.add(specifier.local.name)
+            preservedBindings.add(specifier.local.name)
+          }
+        } else if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
+          const declaration = statement.declaration
+          if (declaration?.type === 'VariableDeclaration') {
+            for (const declarator of declaration.declarations) {
+              collectPatternBindings(declarator.id)
+            }
+          } else if ((declaration?.type === 'FunctionDeclaration' || declaration?.type === 'ClassDeclaration') && declaration.id) {
+            preservedBindings.add(declaration.id.name)
           }
         }
       }
     }
     if ('children' in node) {
-      node.children.forEach(collectPreservedImports)
+      node.children.forEach(collectPreservedBindings)
     }
   }
-  collectPreservedImports(typedRoot)
+  collectPreservedBindings(typedRoot)
 
   // Decorators such as directives and tables contain MDAST subtrees rather than
   // Lexical children, so their JSX references never reach the JSX visitor.
@@ -271,8 +308,8 @@ export function exportLexicalTreeToMdast({
   const defaultImportsMap = new Map<string, string>()
   for (const componentName of referredComponents) {
     // MDX ESM declarations are module bindings even when stored in a directive.
-    // Their aliases, sources, and namespace imports must remain authoritative.
-    if (preservedImportBindings.has(componentName.split('.')[0])) {
+    // Existing imports and locally declared exports must remain authoritative.
+    if (preservedBindings.has(componentName.split('.')[0])) {
       continue
     }
     const descriptor =
