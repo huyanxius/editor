@@ -54,24 +54,6 @@ export const NestedJsxImports = () => {
   const [revision, setRevision] = React.useState(0)
   return (
     <>
-      <MDXEditor
-        key={revision}
-        ref={ref}
-        markdown={markdown}
-        plugins={[
-          directivesPlugin({ directiveDescriptors: [AdmonitionDirectiveDescriptor] }),
-          tablePlugin(),
-          imagePlugin(),
-          jsxPlugin({
-            jsxComponentDescriptors: [
-              { name: 'Zazz', kind: 'flow', source: '@zazz', defaultExport: true, props: [], hasChildren: false, Editor: GenericJsxEditor },
-              { name: 'Badge', kind: 'text', source: '@components', props: [], hasChildren: false, Editor: GenericJsxEditor },
-              { name: '*', kind: 'text', source: '@fallback', props: [], hasChildren: false, Editor: GenericJsxEditor }
-            ]
-          }),
-          toolbarPlugin({ toolbarContents: InsertComponents })
-        ]}
-      />
       <button
         type="button"
         onClick={() => {
@@ -92,6 +74,24 @@ export const NestedJsxImports = () => {
       >
         Reload saved Markdown
       </button>
+      <MDXEditor
+        key={revision}
+        ref={ref}
+        markdown={markdown}
+        plugins={[
+          directivesPlugin({ directiveDescriptors: [AdmonitionDirectiveDescriptor] }),
+          tablePlugin(),
+          imagePlugin(),
+          jsxPlugin({
+            jsxComponentDescriptors: [
+              { name: 'Zazz', kind: 'flow', source: '@zazz', defaultExport: true, props: [], hasChildren: false, Editor: GenericJsxEditor },
+              { name: 'Badge', kind: 'text', source: '@components', props: [], hasChildren: false, Editor: GenericJsxEditor },
+              { name: '*', kind: 'text', source: '@fallback', props: [], hasChildren: false, Editor: GenericJsxEditor }
+            ]
+          }),
+          toolbarPlugin({ toolbarContents: InsertComponents })
+        ]}
+      />
       <pre aria-label="Exported markdown" data-export-revision={exported.revision}>
         {exported.markdown}
       </pre>
