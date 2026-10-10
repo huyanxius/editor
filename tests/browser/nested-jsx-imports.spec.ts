@@ -37,16 +37,45 @@ function parseContent(markdown: string) {
 async function readMarkdown(page: Page) {
   const output = page.getByLabel('Exported markdown')
   const revision = Number(await output.getAttribute('data-export-revision'))
+  await page.evaluate(() => {
+    const events: unknown[] = []
+    ;(window as any).__exportEvents = events
+    for (const name of ['pointerdown', 'mousedown', 'blur', 'focus', 'focusin', 'focusout', 'pointerup', 'mouseup', 'click']) {
+      document.addEventListener(
+        name,
+        (event) => {
+          const button = [...document.querySelectorAll('button')].find((node) => node.textContent === 'Get Markdown')
+          const target = event.target as HTMLElement
+          const rect = button?.getBoundingClientRect()
+          events.push({
+            name,
+            target: target.outerHTML?.slice(0, 300),
+            rect: rect?.toJSON(),
+            rootChildren: [...(document.querySelector('[aria-label="editable markdown"]')?.children ?? [])].map((node) => node.tagName),
+            x: (event as MouseEvent).clientX,
+            y: (event as MouseEvent).clientY
+          })
+        },
+        { capture: true }
+      )
+    }
+  })
   await page.getByRole('button', { name: 'Get Markdown', exact: true }).click()
   // Wait for this export's React render, rather than reading the previous one.
   // An actual empty export still reaches the content assertions below.
-  await expect(output).toHaveAttribute('data-export-revision', String(revision + 1))
+  try {
+    await expect(output).toHaveAttribute('data-export-revision', String(revision + 1))
+  } catch (error) {
+    console.log('EXPORT_EVENTS', JSON.stringify(await page.evaluate(() => (window as any).__exportEvents)))
+    throw error
+  }
   return (await output.textContent()) ?? ''
 }
 
 const occurrences = (text: string, search: string) => text.split(search).length - 1
 
 test.beforeEach(async ({ page }) => {
+  page.on('pageerror', (error) => console.log('PAGE_ERROR', error.message))
   await page.goto('/?story=bug-733--nested-jsx-imports&mode=preview')
   await expect(page.getByRole('button', { name: 'Insert Zazz', exact: true })).toBeVisible()
 })
