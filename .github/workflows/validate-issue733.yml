@@ -86,6 +86,10 @@ jobs:
           console.log(JSON.stringify(report.stats))
           NODE
 
+      - name: Repeat the Firefox table export regression without retries
+        run: |
+          ISSUE733_REPORT=firefox-table-results.json npm exec -- playwright test --config=playwright.issue733.config.ts --project=firefox --grep 'inserting inline JSX into a table' --repeat-each=20
+
       - name: Verify nested JSX insertion, shared imports, tables, and save/reload
         shell: bash
         run: |

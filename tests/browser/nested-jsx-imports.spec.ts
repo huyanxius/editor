@@ -35,8 +35,13 @@ function parseContent(markdown: string) {
 }
 
 async function readMarkdown(page: Page) {
+  const output = page.getByLabel('Exported markdown')
+  const revision = Number(await output.getAttribute('data-export-revision'))
   await page.getByRole('button', { name: 'Get Markdown', exact: true }).click()
-  return (await page.getByLabel('Exported markdown').textContent()) ?? ''
+  // Wait for this export's React render, rather than reading the previous one.
+  // An actual empty export still reaches the content assertions below.
+  await expect(output).toHaveAttribute('data-export-revision', String(revision + 1))
+  return (await output.textContent()) ?? ''
 }
 
 const occurrences = (text: string, search: string) => text.split(search).length - 1
