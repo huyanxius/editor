@@ -1,0 +1,73 @@
+name: Validate issue 654 browser and React 18
+
+on:
+  push:
+    branches:
+      - ci/654-history-validation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue654-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.repository == 'huyanxius/editor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: true
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the PR source is unchanged
+        run: |
+          git diff --exit-code 17fb56702158bc4d277129d34fec89d87a4c7e70 HEAD -- . ':!.github/workflows/validate-issue654.yml'
+          git rev-parse HEAD
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24.19.0'
+
+      - name: Install locked dependencies and browsers
+        run: |
+          npm ci
+          npm exec -- playwright install --with-deps chromium firefox webkit
+
+      - name: Check types, lint, and unit tests
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:once -- --maxWorkers=2 --minWorkers=1
+
+      - name: Run the checked-in history regression in all three browsers
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: history-results.json
+        run: |
+          npm exec -- playwright test tests/browser/conditional-history-toolbar.spec.ts --reporter=line,json
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const report = JSON.parse(readFileSync('history-results.json', 'utf8'))
+          assert.deepEqual(report.errors, [])
+          assert.equal(report.stats.expected, 3)
+          assert.equal(report.stats.unexpected, 0)
+          assert.equal(report.stats.skipped, 0)
+          assert.equal(report.stats.flaky, 0)
+          console.log('HISTORY VERIFIED: Chromium, Firefox, and WebKit passed with no retries or skips.')
+          NODE
+
+      - name: Build and verify the Lexical dependency graph
+        run: |
+          npm run build
+          npm run test:lexical-versions
+
+      - name: Verify the packed React 18 consumer in Chromium
+        run: npm run test:package -- --react=18
