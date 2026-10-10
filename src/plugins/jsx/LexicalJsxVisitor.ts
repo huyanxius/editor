@@ -11,8 +11,8 @@ export const LexicalJsxVisitor: LexicalExportVisitor<LexicalJsxNode, MdxJsxFlowE
     function traverseNestedJsxNodes(node: Mdast.Nodes) {
       if ('children' in node && node.children instanceof Array) {
         node.children.forEach((child: Mdast.Nodes) => {
-          if (isMdastJsxNode(child) && !isHtmlTagName(child.name!)) {
-            actions.registerReferredComponent(child.name!)
+          if (isMdastJsxNode(child) && child.name !== null && !isHtmlTagName(child.name)) {
+            actions.registerReferredComponent(child.name)
           }
           traverseNestedJsxNodes(child)
         })
@@ -21,7 +21,7 @@ export const LexicalJsxVisitor: LexicalExportVisitor<LexicalJsxNode, MdxJsxFlowE
 
     const mdastNode = lexicalNode.getMdastNode()
     const importStatement = lexicalNode.getImportStatement()
-    actions.registerReferredComponent(mdastNode.name!, importStatement)
+    actions.registerReferredComponent(mdastNode.name, importStatement)
     traverseNestedJsxNodes(mdastNode)
     actions.appendToParent(mdastParent, mdastNode)
   },

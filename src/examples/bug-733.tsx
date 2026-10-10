@@ -50,10 +50,30 @@ function InsertComponents() {
 export const NestedJsxImports = () => {
   const ref = React.useRef<MDXEditorMethods>(null)
   const [markdown, setMarkdown] = React.useState(initialMarkdown)
-  const [exported, setExported] = React.useState('')
+  const [exported, setExported] = React.useState({ revision: 0, markdown: '' })
   const [revision, setRevision] = React.useState(0)
   return (
     <>
+      <button
+        type="button"
+        onClick={() => {
+          const saved = ref.current!.getMarkdown()
+          setExported((previous) => ({ revision: previous.revision + 1, markdown: saved }))
+        }}
+      >
+        Get Markdown
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const saved = ref.current!.getMarkdown()
+          setMarkdown(saved)
+          setExported((previous) => ({ ...previous, markdown: saved }))
+          setRevision((value) => value + 1)
+        }}
+      >
+        Reload saved Markdown
+      </button>
       <MDXEditor
         key={revision}
         ref={ref}
@@ -72,26 +92,9 @@ export const NestedJsxImports = () => {
           toolbarPlugin({ toolbarContents: InsertComponents })
         ]}
       />
-      <button
-        type="button"
-        onClick={() => {
-          setExported(ref.current!.getMarkdown())
-        }}
-      >
-        Get Markdown
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const saved = ref.current!.getMarkdown()
-          setMarkdown(saved)
-          setExported(saved)
-          setRevision((value) => value + 1)
-        }}
-      >
-        Reload saved Markdown
-      </button>
-      <pre aria-label="Exported markdown">{exported}</pre>
+      <pre aria-label="Exported markdown" data-export-revision={exported.revision}>
+        {exported.markdown}
+      </pre>
     </>
   )
 }
