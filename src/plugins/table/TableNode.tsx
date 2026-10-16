@@ -188,6 +188,38 @@ export class TableNode extends DecoratorNode<JSX.Element> {
     })
   }
 
+  /** Move a body row to another body-row position. The GFM header stays fixed. */
+  moveRow(from: number, to: number): boolean {
+    const count = this.getLatest().getRowCount()
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < 1 || from >= count || to >= count || from === to) {
+      return false
+    }
+    const rows = this.getWritable().__mdastNode.children
+    rows.splice(to, 0, rows.splice(from, 1)[0])
+    return true
+  }
+
+  /** Move an entire column, including its header and alignment. */
+  moveColumn(from: number, to: number): boolean {
+    const count = this.getLatest().getColCount()
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= count || to >= count || from === to) {
+      return false
+    }
+    const table = this.getWritable().__mdastNode
+    for (const row of table.children) {
+      // GFM permits short body rows. Keep absent cells empty at their original
+      // coordinates before moving the column through them.
+      while (row.children.length < count) row.children.push(structuredClone(EMPTY_CELL))
+      row.children.splice(to, 0, row.children.splice(from, 1)[0])
+    }
+    if (table.align) {
+      const align = Array.from({ length: count }, (_, index) => table.align?.[index] ?? null)
+      align.splice(to, 0, align.splice(from, 1)[0])
+      table.align = align
+    }
+    return true
+  }
+
   insertColumnAt(colIndex: number): void {
     const self = this.getWritable()
     const table = self.__mdastNode
