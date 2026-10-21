@@ -7,14 +7,17 @@ import { LexicalExtensionEditorComposer } from '@lexical/react/LexicalExtensionE
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin'
 import * as RadixPopover from '@radix-ui/react-popover'
 import {
+  $addUpdateTag,
   $createParagraphNode,
   $getNodeByKey,
   $getRoot,
   $getSelection,
   $isElementNode,
+  $isParagraphNode,
   $isRangeSelection,
   $isRootNode,
   BLUR_COMMAND,
+  createCommand,
   CAN_UNDO_COMMAND,
   CAN_REDO_COMMAND,
   HISTORY_PUSH_TAG,
@@ -32,6 +35,7 @@ import {
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   EditorState,
+  SKIP_DOM_SELECTION_TAG,
   LexicalEditor,
   LexicalEditorWithDispose,
   LexicalNode,
@@ -116,6 +120,10 @@ function $isCollapsedAtCellEdge(isBackward: boolean): boolean {
   return true
 }
 
+const SAVE_TABLE_CELL_COMMAND = createCommand<undefined>('SAVE_TABLE_CELL_COMMAND')
+
+type MoveTableEntry = (axis: 'row' | 'column', from: number, to: number) => void
+
 export interface TableEditorProps {
   parentEditor: LexicalEditor
   lexicalTable: TableNode
@@ -126,13 +134,13 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
   const tableKey = lexicalTable.getKey()
   const [activeCell, setActiveCell] = React.useState<[number, number] | null>(null)
   const [cellEditors] = React.useState(() => new Set<LexicalEditor>())
-  const [pasteHistoryStates] = React.useState(() => new WeakSet<EditorState>())
+  const [tableHistoryStates] = React.useState(() => new WeakSet<EditorState>())
   React.useEffect(
     () =>
       parentEditor.registerUpdateListener(({ editorState, prevEditorState, tags }) => {
-        // Preserve the paste branch through selection/history merges, but do not
+        // Preserve the table-operation branch through selection/history merges, but do not
         // carry it onto an older state restored by Undo or a new branch from it.
-        if (!tags.has(HISTORIC_TAG) && pasteHistoryStates.has(prevEditorState)) pasteHistoryStates.add(editorState)
+        if (!tags.has(HISTORIC_TAG) && tableHistoryStates.has(prevEditorState)) tableHistoryStates.add(editorState)
         if (tags.has(HISTORIC_TAG)) {
           const bounds = editorState.read(() => {
             const table = $getTableNodeByKey(tableKey)
@@ -147,11 +155,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
           })
         }
       }),
-    [parentEditor, pasteHistoryStates, tableKey]
+    [parentEditor, tableHistoryStates, tableKey]
   )
+  const activeCellSave = React.useRef<(() => void) | null>(null)
   const [iconComponentFor, readOnly] = useCellValues(iconComponentFor$, readOnly$)
   const getCellKey = React.useMemo(() => {
-    return (cell: Mdast.TableCell & { __cacheKey?: string }) => {
+    return (cell: (Mdast.TableCell | Mdast.TableRow) & { __cacheKey?: string }) => {
       cell.__cacheKey ??= uuidv4()
       return cell.__cacheKey
     }
@@ -218,6 +227,61 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
     lexicalTable.focusEmitter.subscribe(setActiveCellWithBoundaries)
   }, [lexicalTable, setActiveCellWithBoundaries])
 
+  const insertParagraph = React.useCallback(
+    (before: boolean) => {
+      if (readOnly || !parentEditor.isEditable() || !parentEditor.read(() => $getTableNodeByKey(tableKey)?.isAttached())) {
+        return
+      }
+      // Moving focus into editor UI deliberately skips the cell's blur save.
+      // Commit its pending contents before creating the paragraph's Undo step.
+      activeCellSave.current?.()
+      if (!parentEditor.isEditable()) return
+      setActiveCell(null)
+
+      parentEditor.update(
+        () => {
+          const table = $getTableNodeByKey(tableKey)
+          if (!table?.isAttached()) return
+          const sibling = before ? table.getPreviousSibling() : table.getNextSibling()
+          if ($isParagraphNode(sibling) && sibling.isEmpty()) return
+          // Initial import does not enter history. Record a selection-only
+          // baseline so even the very first action can be undone.
+          const index = table.getIndexWithinParent() + (before ? 0 : 1)
+          table.getParentOrThrow().select(index, index)
+        },
+        { discrete: true, tag: SKIP_DOM_SELECTION_TAG }
+      )
+
+      let selected = false
+      parentEditor.update(
+        () => {
+          const table = $getTableNodeByKey(tableKey)
+          if (!table?.isAttached()) return
+          const sibling = before ? table.getPreviousSibling() : table.getNextSibling()
+          if ($isParagraphNode(sibling) && sibling.isEmpty()) {
+            sibling.select()
+          } else {
+            const paragraph = $createParagraphNode()
+            if (before) table.insertBefore(paragraph)
+            else table.insertAfter(paragraph)
+            paragraph.select()
+            $addUpdateTag(HISTORY_PUSH_TAG)
+          }
+          selected = true
+        },
+        {
+          discrete: true,
+          onUpdate: () => {
+            if (selected) {
+              parentEditor.focus()
+            }
+          }
+        }
+      )
+    },
+    [parentEditor, readOnly, tableKey]
+  )
+
   const addRowToBottom = React.useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -269,6 +333,53 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
     [parentEditor, tableKey]
   )
 
+  const moveEntry: MoveTableEntry = React.useCallback(
+    (axis, from, to) => {
+      if (readOnly || !parentEditor.isEditable()) return
+      const valid = parentEditor.getEditorState().read(() => {
+        const table = $getTableNodeByKey(tableKey)
+        const count = axis === 'row' ? table?.getRowCount() : table?.getColCount()
+        return (
+          count !== undefined &&
+          from !== to &&
+          from >= (axis === 'row' ? 1 : 0) &&
+          to >= (axis === 'row' ? 1 : 0) &&
+          from < count &&
+          to < count
+        )
+      })
+      if (!valid) return
+      // A menu is editor UI, so opening it need not blur/save the active cell.
+      // Commit pending typing first; the move itself is a separate Undo step.
+      for (const cellEditor of cellEditors) cellEditor.dispatchCommand(SAVE_TABLE_CELL_COMMAND, undefined)
+      for (const cellEditor of cellEditors) {
+        const history = getPeerDependencyFromEditor<typeof HistoryExtension>(cellEditor, HistoryExtension.name)!.output.historyState.value
+        history.undoStack = []
+        history.redoStack = []
+      }
+      const history = getPeerDependencyFromEditor<typeof HistoryExtension>(parentEditor, HistoryExtension.name)?.output.historyState.value
+      if (history && !history.current) history.current = { editor: parentEditor, editorState: parentEditor.getEditorState() }
+      parentEditor.update(
+        () => {
+          const table = $getTableNodeByKey(tableKey)
+          if (axis === 'row') table?.moveRow(from, to)
+          else table?.moveColumn(from, to)
+        },
+        { discrete: true, tag: HISTORY_PUSH_TAG }
+      )
+      tableHistoryStates.add(parentEditor.getEditorState())
+      const next: [number, number] = activeCell ? [...activeCell] : axis === 'row' ? [0, from] : [from, 0]
+      const index = axis === 'row' ? 1 : 0
+      const value = next[index]
+      if (value === from) next[index] = to
+      else if (from < to && value > from && value <= to) next[index]--
+      else if (from > to && value >= to && value < from) next[index]++
+      setActiveCell(next)
+      parentEditor.dispatchCommand(NESTED_EDITOR_UPDATED_COMMAND, undefined)
+    },
+    [readOnly, parentEditor, tableKey, cellEditors, tableHistoryStates, activeCell]
+  )
+
   const [highlightedCoordinates, setHighlightedCoordinates] = React.useState<[number, number]>([-1, -1])
 
   const onTableMouseOver = React.useCallback((e: React.MouseEvent<HTMLTableElement>) => {
@@ -318,7 +429,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
       {readOnly || (
         <thead>
           <tr>
-            <th className={styles.tableToolsColumn}></th>
+            <th className={styles.tableToolsColumn} data-tool-cell={true}>
+              <TableActions onInsertParagraph={insertParagraph} />
+            </th>
             {Array.from({ length: mdastNode.children[0].children.length }, (_, colIndex) => {
               return (
                 <th key={colIndex} data-tool-cell={true}>
@@ -327,6 +440,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
                       setActiveCellWithBoundaries,
                       parentEditor,
                       colIndex,
+                      moveEntry,
                       highlightedCoordinates,
                       lexicalTable,
                       align: (mdastNode.align ?? [])[colIndex]
@@ -364,10 +478,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
         {mdastNode.children.map((row, rowIndex) => {
           const CellElement = getCellType(rowIndex)
           return (
-            <tr key={rowIndex}>
+            <tr key={getCellKey(row)}>
               {readOnly || (
                 <CellElement className={styles.toolCell} data-tool-cell={true}>
-                  <RowEditor {...{ setActiveCellWithBoundaries, parentEditor, rowIndex, highlightedCoordinates, lexicalTable }} />
+                  <RowEditor
+                    {...{ setActiveCellWithBoundaries, parentEditor, rowIndex, highlightedCoordinates, lexicalTable, moveEntry }}
+                  />
                 </CellElement>
               )}
               {row.children.map((mdastCell, colIndex) => {
@@ -377,13 +493,14 @@ export const TableEditor: React.FC<TableEditorProps> = ({ mdastNode, parentEdito
                     key={getCellKey(mdastCell)}
                     contents={mdastCell.children}
                     cellEditors={cellEditors}
-                    pasteHistoryStates={pasteHistoryStates}
+                    tableHistoryStates={tableHistoryStates}
                     setActiveCell={setActiveCellWithBoundaries}
                     {...{
                       rowIndex,
                       colIndex,
                       lexicalTable,
                       parentEditor,
+                      activeCellSave,
                       activeCell: readOnly ? [-1, -1] : activeCell
                     }}
                   />
@@ -423,13 +540,14 @@ export interface CellProps {
   lexicalTable: TableNode
   contents: Mdast.PhrasingContent[]
   cellEditors: Set<LexicalEditor>
-  pasteHistoryStates: WeakSet<EditorState>
+  tableHistoryStates: WeakSet<EditorState>
   colIndex: number
   rowIndex: number
   align?: Mdast.AlignType
   activeCell: [number, number] | null
   setActiveCell: (cell: [number, number] | null) => void
   focus: boolean
+  activeCellSave: React.RefObject<(() => void) | null>
 }
 
 const Cell: React.FC<Omit<CellProps, 'focus'>> = ({ align, ...props }) => {
@@ -462,7 +580,8 @@ const CellEditor: React.FC<CellProps> = ({
   colIndex,
   rowIndex,
   cellEditors,
-  pasteHistoryStates
+  tableHistoryStates,
+  activeCellSave
 }) => {
   const tableKey = lexicalTable.getKey()
   const [
@@ -611,15 +730,15 @@ const CellEditor: React.FC<CellProps> = ({
     const history = getPeerDependencyFromEditor<typeof HistoryExtension>(editor, HistoryExtension.name)!.output.historyState.value
     const parentHistory = getPeerDependencyFromEditor<typeof HistoryExtension>(parentEditor, HistoryExtension.name)?.output.historyState
       .value
-    const hasPasteHistory = () =>
+    const hasTableHistory = () =>
       Boolean(
         parentHistory &&
           [parentHistory.current, ...parentHistory.undoStack, ...parentHistory.redoStack].some(
-            (entry) => entry && pasteHistoryStates.has(entry.editorState)
+            (entry) => entry && tableHistoryStates.has(entry.editorState)
           )
       )
     const changesThisTable = (target: EditorState | undefined) => {
-      if (!target || !hasPasteHistory()) return false
+      if (!target || !hasTableHistory()) return false
       const currentTable = parentEditor.getEditorState().read(() => $getTableNodeByKey(tableKey)?.getMdastNode())
       const targetTable = target.read(() => $getTableNodeByKey(tableKey)?.getMdastNode())
       return Boolean(currentTable && targetTable && !isMdastEqualIgnoringPositions(currentTable, targetTable))
@@ -693,7 +812,7 @@ const CellEditor: React.FC<CellProps> = ({
             },
             { discrete: true, tag: HISTORY_PUSH_TAG }
           )
-          pasteHistoryStates.add(parentEditor.getEditorState())
+          tableHistoryStates.add(parentEditor.getEditorState())
           setActiveCell([colIndex, rowIndex])
           parentEditor.dispatchCommand(NESTED_EDITOR_UPDATED_COMMAND, undefined)
           return true
@@ -719,7 +838,7 @@ const CellEditor: React.FC<CellProps> = ({
         COMMAND_PRIORITY_CRITICAL
       )
     )
-  }, [editor, focus, save, parentEditor, tableKey, colIndex, rowIndex, setActiveCell, cellEditors, pasteHistoryStates])
+  }, [editor, focus, save, parentEditor, tableKey, colIndex, rowIndex, setActiveCell, cellEditors, tableHistoryStates])
 
   const isCurrentCell = React.useCallback(
     () =>
@@ -742,26 +861,47 @@ const CellEditor: React.FC<CellProps> = ({
       // again from an older local stack after the parent has restored it.
       const parentHistory = getPeerDependencyFromEditor<typeof HistoryExtension>(parentEditor, HistoryExtension.name)?.output.historyState
         .value
-      const hasPasteHistory =
+      const hasTableHistory =
         parentHistory &&
         [parentHistory.current, ...parentHistory.undoStack, ...parentHistory.redoStack].some(
-          (entry) => entry && pasteHistoryStates.has(entry.editorState)
+          (entry) => entry && tableHistoryStates.has(entry.editorState)
         )
-      if (editor && hasPasteHistory) {
+      if (editor && hasTableHistory) {
         const history = getPeerDependencyFromEditor<typeof HistoryExtension>(editor, HistoryExtension.name)!.output.historyState.value
         history.undoStack = []
         history.redoStack = []
       }
       setActiveCell(nextCell)
     },
-    [editor, isCurrentCell, save, setActiveCell, parentEditor, pasteHistoryStates]
+    [editor, isCurrentCell, save, setActiveCell, parentEditor, tableHistoryStates]
   )
+
+  React.useEffect(() => {
+    if (!focus || !editor) return
+    const flushAndSave = () => {
+      // editor.read() commits pending typing before the normal cell exit saves.
+      editor.read(() => undefined)
+      saveAndFocus(null)
+    }
+    activeCellSave.current = flushAndSave
+    return () => {
+      if (activeCellSave.current === flushAndSave) activeCellSave.current = null
+    }
+  }, [activeCellSave, editor, focus, saveAndFocus])
 
   React.useEffect(() => {
     if (!editor) {
       return
     }
     return mergeRegister(
+      editor.registerCommand(
+        SAVE_TABLE_CELL_COMMAND,
+        () => {
+          save()
+          return true
+        },
+        COMMAND_PRIORITY_CRITICAL
+      ),
       editor.registerCommand(
         KEY_TAB_COMMAND,
         (payload) => {
@@ -828,11 +968,17 @@ const CellEditor: React.FC<CellProps> = ({
     )
   }, [colIndex, editor, focus, rootEditor, rowIndex, save, saveAndFocus, setActiveCell])
 
+  const previousCoordinates = React.useRef([rowIndex, colIndex])
   React.useEffect(() => {
+    const moved = previousCoordinates.current[0] !== rowIndex || previousCoordinates.current[1] !== colIndex
+    previousCoordinates.current = [rowIndex, colIndex]
     if (focus && editor) {
+      // React can move the existing cell DOM while Lexical's selection remains
+      // unchanged. Restore DOM focus only for that move, preserving normal focus/history behavior.
+      if (moved) editor.getRootElement()?.focus({ preventScroll: true })
       editor.focus()
     }
-  }, [focus, editor])
+  }, [focus, editor, rowIndex, colIndex])
 
   if (!editor) {
     return null
@@ -849,6 +995,62 @@ const CellEditor: React.FC<CellProps> = ({
   )
 }
 
+const TableActions: React.FC<{ onInsertParagraph: (before: boolean) => void }> = ({ onInsertParagraph }) => {
+  const [editorRootElementRef, iconComponentFor] = useCellValues(editorRootElementRef$, iconComponentFor$)
+  const [open, setOpen] = React.useState(false)
+  const pendingInsertion = React.useRef<boolean | null>(null)
+  const t = useTranslation()
+
+  return (
+    <RadixPopover.Root open={open} onOpenChange={setOpen}>
+      <RadixPopover.Trigger
+        className={classNames(styles.tableColumnEditorTrigger, styles.tableActionsTrigger)}
+        title={t('table.tableMenu', 'Table menu')}
+        data-toolbar-item="true"
+        onKeyDownCapture={(event) => {
+          // Keep native button activation out of the editor's Enter/Space commands.
+          if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+        }}
+      >
+        {iconComponentFor('more_horiz')}
+      </RadixPopover.Trigger>
+      <RadixPopover.Portal container={editorRootElementRef?.current}>
+        <RadixPopover.Content
+          className={classNames(styles.tableColumnEditorPopoverContent, styles.tableActionsMenu)}
+          data-editor-dialog="true"
+          side="top"
+          sideOffset={5}
+          onCloseAutoFocus={(event) => {
+            const before = pendingInsertion.current
+            pendingInsertion.current = null
+            if (before !== null) {
+              event.preventDefault()
+              // Close the popover before moving the table and focusing prose.
+              onInsertParagraph(before)
+            }
+          }}
+        >
+          {[true, false].map((before) => (
+            <button
+              key={String(before)}
+              type="button"
+              onClick={() => {
+                pendingInsertion.current = before
+                setOpen(false)
+              }}
+            >
+              {before
+                ? t('table.insertParagraphBefore', 'Insert paragraph before table')
+                : t('table.insertParagraphAfter', 'Insert paragraph after table')}
+            </button>
+          ))}
+          <RadixPopover.Arrow className={styles.popoverArrow} />
+        </RadixPopover.Content>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
+  )
+}
+
 interface ColumnEditorProps {
   parentEditor: LexicalEditor
   lexicalTable: TableNode
@@ -856,6 +1058,7 @@ interface ColumnEditorProps {
   highlightedCoordinates: [number, number]
   setActiveCellWithBoundaries: (cell: [number, number] | null) => void
   align: Mdast.AlignType
+  moveEntry: MoveTableEntry
 }
 
 const ColumnEditor: React.FC<ColumnEditorProps> = ({
@@ -864,8 +1067,25 @@ const ColumnEditor: React.FC<ColumnEditorProps> = ({
   align,
   lexicalTable,
   colIndex,
+  moveEntry,
   setActiveCellWithBoundaries
 }) => {
+  const [open, setOpen] = React.useState(false)
+  const [pendingMove, setPendingMove] = React.useState<number | null>(null)
+  React.useEffect(() => {
+    if (open || pendingMove === null) return
+    const timer = setTimeout(() => {
+      setPendingMove(null)
+      moveEntry('column', colIndex, pendingMove)
+    })
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [open, pendingMove, moveEntry, colIndex])
+  const requestMove = (target: number) => {
+    setOpen(false)
+    setPendingMove(target)
+  }
   const tableKey = lexicalTable.getKey()
   const [editorRootElementRef, iconComponentFor] = useCellValues(editorRootElementRef$, iconComponentFor$)
 
@@ -913,8 +1133,9 @@ const ColumnEditor: React.FC<ColumnEditorProps> = ({
 
   const t = useTranslation()
   return (
-    <RadixPopover.Root>
+    <RadixPopover.Root open={open} onOpenChange={setOpen}>
       <RadixPopover.PopoverTrigger
+        data-toolbar-item="true"
         className={styles.tableColumnEditorTrigger}
         data-active={highlightedCoordinates[0] === colIndex + 1}
         title={t('table.columnMenu', 'Column menu')}
@@ -923,14 +1144,36 @@ const ColumnEditor: React.FC<ColumnEditorProps> = ({
       </RadixPopover.PopoverTrigger>
       <RadixPopover.Portal container={editorRootElementRef?.current}>
         <RadixPopover.PopoverContent
+          data-editor-dialog="true"
           className={classNames(styles.tableColumnEditorPopoverContent)}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault()
+          onCloseAutoFocus={(e) => {
+            if (pendingMove !== null) e.preventDefault()
           }}
           sideOffset={5}
           side="top"
         >
           <RadixToolbar.Root className={styles.tableColumnEditorToolbar}>
+            <RadixToolbar.Button
+              disabled={colIndex === 0}
+              onClick={() => {
+                requestMove(colIndex - 1)
+              }}
+              title={t('table.moveColumnLeft', 'Move column left')}
+              aria-label={t('table.moveColumnLeft', 'Move column left')}
+            >
+              ←
+            </RadixToolbar.Button>
+            <RadixToolbar.Button
+              disabled={colIndex >= lexicalTable.getColCount() - 1}
+              onClick={() => {
+                requestMove(colIndex + 1)
+              }}
+              title={t('table.moveColumnRight', 'Move column right')}
+              aria-label={t('table.moveColumnRight', 'Move column right')}
+            >
+              →
+            </RadixToolbar.Button>
+            <RadixToolbar.Separator />
             <RadixToolbar.ToggleGroup
               className={styles.toggleGroupRoot}
               onValueChange={(value) => {
@@ -974,6 +1217,7 @@ const ColumnEditor: React.FC<ColumnEditorProps> = ({
   )
 }
 interface RowEditorProps {
+  moveEntry: MoveTableEntry
   parentEditor: LexicalEditor
   lexicalTable: TableNode
   rowIndex: number
@@ -986,8 +1230,25 @@ const RowEditor: React.FC<RowEditorProps> = ({
   highlightedCoordinates,
   lexicalTable,
   rowIndex,
+  moveEntry,
   setActiveCellWithBoundaries
 }) => {
+  const [open, setOpen] = React.useState(false)
+  const [pendingMove, setPendingMove] = React.useState<number | null>(null)
+  React.useEffect(() => {
+    if (open || pendingMove === null) return
+    const timer = setTimeout(() => {
+      setPendingMove(null)
+      moveEntry('row', rowIndex, pendingMove)
+    })
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [open, pendingMove, moveEntry, rowIndex])
+  const requestMove = (target: number) => {
+    setOpen(false)
+    setPendingMove(target)
+  }
   const tableKey = lexicalTable.getKey()
   const [editorRootElementRef, iconComponentFor] = useCellValues(editorRootElementRef$, iconComponentFor$)
 
@@ -1026,8 +1287,9 @@ const RowEditor: React.FC<RowEditorProps> = ({
 
   const t = useTranslation()
   return (
-    <RadixPopover.Root>
+    <RadixPopover.Root open={open} onOpenChange={setOpen}>
       <RadixPopover.PopoverTrigger
+        data-toolbar-item="true"
         className={styles.tableColumnEditorTrigger}
         data-active={highlightedCoordinates[1] === rowIndex}
         title={t('table.rowMenu', 'Row menu')}
@@ -1036,14 +1298,36 @@ const RowEditor: React.FC<RowEditorProps> = ({
       </RadixPopover.PopoverTrigger>
       <RadixPopover.Portal container={editorRootElementRef?.current}>
         <RadixPopover.PopoverContent
+          data-editor-dialog="true"
           className={classNames(styles.tableColumnEditorPopoverContent)}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault()
+          onCloseAutoFocus={(e) => {
+            if (pendingMove !== null) e.preventDefault()
           }}
           sideOffset={5}
           side="bottom"
         >
           <RadixToolbar.Root className={styles.tableColumnEditorToolbar}>
+            <RadixToolbar.Button
+              disabled={rowIndex <= 1}
+              onClick={() => {
+                requestMove(rowIndex - 1)
+              }}
+              title={t('table.moveRowUp', 'Move row up')}
+              aria-label={t('table.moveRowUp', 'Move row up')}
+            >
+              ↑
+            </RadixToolbar.Button>
+            <RadixToolbar.Button
+              disabled={rowIndex === 0 || rowIndex >= lexicalTable.getRowCount() - 1}
+              onClick={() => {
+                requestMove(rowIndex + 1)
+              }}
+              title={t('table.moveRowDown', 'Move row down')}
+              aria-label={t('table.moveRowDown', 'Move row down')}
+            >
+              ↓
+            </RadixToolbar.Button>
+            <RadixToolbar.Separator />
             <RadixToolbar.Button
               onClick={insertRowAt.bind(null, rowIndex)}
               title={t('table.insertRowAbove', 'Insert a row above this one')}
