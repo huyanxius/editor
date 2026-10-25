@@ -83,6 +83,11 @@ export class FrontmatterNode extends DecoratorNode<JSX.Element> {
     return false
   }
 
+  isSelected(): boolean {
+    // Hidden document metadata must not enter selection-based clipboard exports.
+    return false
+  }
+
   isInline(): boolean {
     return false
   }
