@@ -1,0 +1,29 @@
+.mdx-github-alert {
+  border-inline-start: 0.25rem solid var(--accent-9, #0969da);
+  padding: 0.5rem 1rem;
+  margin-block: 1rem;
+}
+
+.mdx-github-alert::before {
+  content: attr(data-github-alert);
+  display: block;
+  font-weight: 600;
+  color: var(--accent-11, #0969da);
+  user-select: none;
+}
+
+.mdx-github-alert[data-github-alert='TIP'] {
+  border-color: var(--admonitionInfoBorder, #1a7f37);
+}
+
+.mdx-github-alert[data-github-alert='IMPORTANT'] {
+  border-color: var(--admonitionTipBorder, #8250df);
+}
+
+.mdx-github-alert[data-github-alert='WARNING'] {
+  border-color: var(--admonitionCautionBorder, #9a6700);
+}
+
+.mdx-github-alert[data-github-alert='CAUTION'] {
+  border-color: var(--admonitionDangerBorder, #cf222e);
+}

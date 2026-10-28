@@ -1,0 +1,7 @@
+:root { font-family: system-ui, sans-serif; color: #1f2937; background: #f7f8fa; }
+body { margin: 0; }
+main { max-width: 900px; margin: 2rem auto; padding: 2rem; background: white; border: 1px solid #d8dee4; border-radius: 12px; }
+h1 { margin-top: 0; }
+.mdxeditor { margin-top: 1rem; border: 1px solid #d8dee4; border-radius: 6px; }
+textarea { display: block; width: 100%; box-sizing: border-box; min-height: 180px; padding: 1rem; font-family: monospace; margin-bottom: .75rem; }
+button { margin-right: .75rem; }
