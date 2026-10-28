@@ -7,6 +7,13 @@ on:
       - packages/github-alerts/**
       - .github/workflows/github-alerts.yml
 
+  pull_request:
+    branches: [review/github-alerts-baseline-20261028]
+    types: [opened, synchronize, reopened]
+    paths:
+      - packages/github-alerts/**
+      - .github/workflows/github-alerts.yml
+
 permissions:
   contents: read
 
@@ -16,7 +23,13 @@ concurrency:
 
 jobs:
   test:
-    if: github.repository == 'huyanxius/editor'
+    if: >-
+      github.repository == 'huyanxius/editor' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'huyanxius/editor' &&
+        github.event.pull_request.head.ref == 'feat/github-alerts-standalone-20261028' &&
+        github.event.pull_request.base.ref == 'review/github-alerts-baseline-20261028'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -24,6 +37,8 @@ jobs:
         working-directory: packages/github-alerts
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
