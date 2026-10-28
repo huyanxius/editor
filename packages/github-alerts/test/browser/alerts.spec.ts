@@ -49,3 +49,16 @@ test('readOnly disables controls and source reload', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Load Markdown' })).toBeDisabled()
   await expect(page.locator('[contenteditable="true"]')).toHaveCount(0)
 })
+
+test('first toolbar insertion before focus is undoable', async ({ page }) => {
+  const source = page.getByRole('textbox', { name: 'Markdown source' })
+  const initial = await source.inputValue()
+  await page.getByRole('combobox', { name: 'GitHub alert', exact: true }).click()
+  await page.getByRole('option', { name: 'CAUTION', exact: true }).click()
+  await expect(page.locator('[data-github-alert="CAUTION"]')).toBeVisible()
+  await page.getByRole('radio', { name: /^Undo / }).click()
+  await expect(page.locator('[data-github-alert="CAUTION"]')).toHaveCount(0)
+  await expect(source).toHaveValue(initial)
+  await page.getByRole('radio', { name: /^Redo / }).click()
+  await expect(page.locator('[data-github-alert="CAUTION"]')).toBeVisible()
+})

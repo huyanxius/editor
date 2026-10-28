@@ -13,7 +13,7 @@ Supports `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, and `CAUTION`. Alert bodies are 
 
 The provisional package name is **`mdx-editor-github-alerts`**. This is an unpublished development package (`private: true`), extracted from [MDXEditor #999](https://github.com/mdx-editor/editor/pull/999). No npm name has been reserved, repository created, or release workflow enabled. It can be built and installed from a local tarball independently of this checkout.
 
-The compatibility baseline is **MDXEditor 4.3.4**, **Lexical 0.48.x**, and React 18/19. All Lexical packages in the consuming application must resolve to the same version. This package imports only package-root MDXEditor/Lexical APIs; it does not import MDXEditor source files, private quote visitors, or history internals.
+The compatibility baseline is **MDXEditor 4.3.4**, **Lexical 0.48.x**, and React 18/19. The packed-consumer matrix covers React 18.3.1 with the older `mdast-util-from-markdown` 2.0.0 compiler and React 19.2.1 with compiler 2.1.0. Both use strict declaration checking (`skipLibCheck: false`) and verify the actual parser/Lexical dependency graph. All Lexical packages in the consuming application must resolve to the same version. This package imports only package-root MDXEditor/Lexical APIs; it does not import MDXEditor source files, private quote visitors, or history internals.
 
 ## Build and use locally
 
@@ -87,7 +87,7 @@ npm run demo           # Local interactive example.
 
 For an existing Chromium installation, use `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium npm run test:browser`. Otherwise install Playwright's Chromium with `npx playwright install chromium`.
 
-The tests exercise all five types, source reload, JSON, whitespace and reference-link parsing, quote-handler coexistence, bullet/number/check conversion and undo/redo, list removal, empty paragraph/list exit, focus, read-only behavior, and independent editors. The packed-consumer check verifies emitted exports/types and repeats integration tests without repository source aliases.
+The 70 unit/integration tests exercise all five types, source reload, JSON, whitespace and reference-link parsing, quote-handler coexistence, bullet/number/check conversion and undo/redo, list removal, empty paragraph/list exit, focus, read-only behavior, and independent editors. The packed-consumer check verifies emitted exports/types and repeats integration tests without repository source aliases.
 
 ## License and provenance
 

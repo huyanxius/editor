@@ -66,12 +66,19 @@ try {
     }, include: ['*.test.tsx', '*.test.ts', 'setup.ts'] }))
     run(['exec', '--', 'tsc', '--noEmit'], cwd)
     run(['exec', '--', 'vitest', 'run', '--reporter=dot'], cwd)
-    const graph = JSON.parse(run(['ls', 'lexical', '--all', '--json'], cwd, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' }))
-    const versions = new Set()
-    function visit(node) { for (const [name, dependency] of Object.entries(node.dependencies ?? {})) { if (name === 'lexical') versions.add(dependency.version); visit(dependency) } }
-    visit(graph)
-    assert.deepEqual([...versions], ['0.48.0'])
-    console.log(`Packed consumer passed: React ${version}, MDXEditor 4.3.4, parser ${parserVersion}, Lexical ${[...versions]}`)
+    for (const [dependency, expected] of [['lexical', '0.48.0'], ['mdast-util-from-markdown', parserVersion]]) {
+      const graph = JSON.parse(run(['ls', dependency, '--all', '--json'], cwd, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' }))
+      const versions = new Set()
+      function visit(node) {
+        for (const [name, child] of Object.entries(node.dependencies ?? {})) {
+          if (name === dependency) versions.add(child.version)
+          visit(child)
+        }
+      }
+      visit(graph)
+      assert.deepEqual([...versions], [expected], `Unexpected ${dependency} graph`)
+    }
+    console.log(`Packed consumer passed: React ${version}, MDXEditor 4.3.4, parser ${parserVersion}, Lexical 0.48.0`)
   }
 } finally {
   rmSync(temp, { recursive: true, force: true })
