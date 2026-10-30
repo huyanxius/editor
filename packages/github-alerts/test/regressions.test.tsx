@@ -77,6 +77,21 @@ function setup(markdown: string, readOnly = false, extraPlugins: RealmPlugin[] =
   }
 }
 
+// An unchanged setMarkdown is a no-op in MDXEditor. Cross a distinct document
+// and verify its DOM/export before restoring the source under test.
+async function reloadMarkdown(ref: React.RefObject<MDXEditorMethods | null>, container: HTMLElement, markdown: string) {
+  const temporary = 'Temporary ordinary document for reload'
+  expect(markdown).not.toBe(temporary)
+  act(() => { ref.current!.setMarkdown(temporary) })
+  await waitFor(() => {
+    expect(ref.current!.getMarkdown()).toBe(temporary)
+    expect(container.querySelector('[data-github-alert]')).toBeNull()
+    expect(container.querySelector('[contenteditable="true"]')).toHaveTextContent(temporary)
+  })
+  act(() => { ref.current!.setMarkdown(markdown) })
+  await waitFor(() => { expect(ref.current!.getMarkdown()).toBe(markdown) })
+}
+
 describe('GitHub alerts', () => {
   it.each(GITHUB_ALERT_TYPES)('round trips %s with inline formatting', (type) => {
     const markdown = `> [!${type}]\n> A **bold** and *italic* message.`
@@ -84,13 +99,12 @@ describe('GitHub alerts', () => {
     expect(container.querySelector(`[data-github-alert="${type}"]`)).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe(markdown)
   })
-  it('preserves multiple paragraphs and lists through source replacement', () => {
+  it('preserves multiple paragraphs and lists through source replacement', async () => {
     const markdown = '> [!IMPORTANT]\n> First\n>\n> * one\n> * two\n>\n> Last'
-    const { ref } = setup(markdown)
+    const { ref, container } = setup(markdown)
     expect(ref.current!.getMarkdown()).toBe(markdown)
-    act(() => {
-      ref.current!.setMarkdown(ref.current!.getMarkdown())
-    })
+    await reloadMarkdown(ref, container, markdown)
+    expect(container.querySelector('[data-github-alert="IMPORTANT"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe(markdown)
   })
   it.each([
@@ -101,14 +115,13 @@ describe('GitHub alerts', () => {
     '> Before [!NOTE]\n> Leave intact',
     '> [!NOTE] inline',
     '> [!NOTE]**inline**'
-  ])('keeps ordinary quotes: %s', (markdown) => {
+  ])('keeps ordinary quotes: %s', async (markdown) => {
     const { ref, container } = setup(markdown)
     expect(container.querySelector('[data-github-alert]')).toBeNull()
     // Markdown may escape literal brackets; a second import preserves its meaning.
     const output = ref.current!.getMarkdown()
-    act(() => {
-      ref.current!.setMarkdown(output)
-    })
+    await reloadMarkdown(ref, container, output)
+    expect(container.querySelector('[data-github-alert]')).toBeNull()
     expect(ref.current!.getMarkdown()).toBe(output)
   })
   it('coexists with the required public quotePlugin', () => {
@@ -411,11 +424,12 @@ describe('composable Markdown serialization', () => {
 })
 
 describe('standalone marker whitespace', () => {
-  it.each([' ', '  ', '   ', '\t', ' \t  '])('accepts trailing %j without exporting a leading hard break', (space) => {
+  it.each([' ', '  ', '   ', '\t', ' \t  '])('accepts trailing %j without exporting a leading hard break', async (space) => {
     const { ref, container } = setup(`> [!NOTE]${space}\n> Body`)
     expect(container.querySelector('[data-github-alert="NOTE"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe('> [!NOTE]\n> Body')
-    act(() => { ref.current!.setMarkdown(ref.current!.getMarkdown()) })
+    await reloadMarkdown(ref, container, ref.current!.getMarkdown())
+    expect(container.querySelector('[data-github-alert="NOTE"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe('> [!NOTE]\n> Body')
   })
   it.each(['\n', '\r\n', '\r'])('accepts trailing tabs/spaces with %j and formatted content', (eol) => {
@@ -423,12 +437,13 @@ describe('standalone marker whitespace', () => {
     expect(container.querySelector('[data-github-alert="WARNING"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe('> [!WARNING]\n> **Body**')
   })
-  it.each(['> [!NOTE]   ', '> [!NOTE]\t', '> [!NOTE]  \n>\n> Body'])('supports an empty marker paragraph: %j', (markdown) => {
+  it.each(['> [!NOTE]   ', '> [!NOTE]\t', '> [!NOTE]  \n>\n> Body'])('supports an empty marker paragraph: %j', async (markdown) => {
     const { ref, container } = setup(markdown)
     expect(container.querySelector('[data-github-alert="NOTE"]')).not.toBeNull()
     const output = ref.current!.getMarkdown()
     expect(output).toBe(markdown.includes('Body') ? '> [!NOTE]\n> Body' : '> [!NOTE]\n>')
-    act(() => { ref.current!.setMarkdown(output) })
+    await reloadMarkdown(ref, container, output)
+    expect(container.querySelector('[data-github-alert="NOTE"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe(output)
   })
   it.each([
@@ -437,11 +452,11 @@ describe('standalone marker whitespace', () => {
     '> \\[!NOTE]   \n> Literal',
     '> &#91;!NOTE]   \n> Literal',
     '> [!UNKNOWN]   \n> Literal'
-  ])('does not reinterpret marker-like text: %j', (markdown) => {
+  ])('does not reinterpret marker-like text: %j', async (markdown) => {
     const { ref, container } = setup(markdown)
     expect(container.querySelector('[data-github-alert]')).toBeNull()
     const output = ref.current!.getMarkdown()
-    act(() => { ref.current!.setMarkdown(output) })
+    await reloadMarkdown(ref, container, output)
     expect(container.querySelector('[data-github-alert]')).toBeNull()
     expect(ref.current!.getMarkdown()).toBe(output)
   })

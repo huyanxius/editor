@@ -77,12 +77,27 @@ function setup(markdown = original) {
   }
 }
 
+// An unchanged setMarkdown is a no-op in MDXEditor. Cross a distinct document
+// and verify its DOM/export before restoring the source under test.
+async function reloadMarkdown(ref: React.RefObject<MDXEditorMethods | null>, container: HTMLElement, markdown: string) {
+  const temporary = 'Temporary ordinary document for reload'
+  expect(markdown).not.toBe(temporary)
+  act(() => { ref.current!.setMarkdown(temporary) })
+  await waitFor(() => {
+    expect(ref.current!.getMarkdown()).toBe(temporary)
+    expect(container.querySelector('[data-github-alert]')).toBeNull()
+    expect(container.querySelector('[contenteditable="true"]')).toHaveTextContent(temporary)
+  })
+  act(() => { ref.current!.setMarkdown(markdown) })
+  await waitFor(() => { expect(ref.current!.getMarkdown()).toBe(markdown) })
+}
+
 describe('alerts in a directive nested editor', () => {
-  it('exports untouched nested MDAST without escaping its marker and reloads the alert', () => {
+  it('exports untouched nested MDAST without escaping its marker and reloads the alert', async () => {
     const { ref, container } = setup()
     expect(container.querySelector('[data-github-alert="TIP"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe(original)
-    act(() => { ref.current!.setMarkdown(ref.current!.getMarkdown()) })
+    await reloadMarkdown(ref, container, ref.current!.getMarkdown())
     expect(container.querySelector('[data-github-alert="TIP"]')).not.toBeNull()
     expect(ref.current!.getMarkdown()).toBe(original)
   })
@@ -102,7 +117,7 @@ describe('alerts in a directive nested editor', () => {
     view.blurNested(nested)
     const expected = ':::note\n> [!WARNING]\n> Edited nested content\n:::'
     await waitFor(() => { expect(view.ref.current!.getMarkdown()).toBe(expected) })
-    act(() => { view.ref.current!.setMarkdown(expected) })
+    await reloadMarkdown(view.ref, view.container, expected)
     expect(view.container.querySelector('[data-github-alert="WARNING"]')).not.toBeNull()
     expect(view.ref.current!.getMarkdown()).toBe(expected)
   })

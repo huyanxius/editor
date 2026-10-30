@@ -7,17 +7,29 @@ test.beforeEach(async ({ page }) => {
 
 test('list conversion, undo, redo and reloading preserve alert marker', async ({ page }) => {
   const alert = page.locator('[data-github-alert="NOTE"]')
+  const source = page.getByRole('textbox', { name: 'Markdown source' })
   await alert.locator('p').click()
   await page.getByRole('radio', { name: 'Bulleted list' }).click()
   await expect(alert.locator('ul li')).toContainText('Start here.')
-  await expect(page.getByRole('textbox', { name: 'Markdown source' })).toHaveValue(/^> \[!NOTE\]\n> \* Start here\./)
+  await expect(source).toHaveValue(/^> \[!NOTE\]\n> \* Start here\./)
+  const converted = await source.inputValue()
   await page.getByRole('radio', { name: /^Undo / }).click()
   await expect(alert.locator('ul')).toHaveCount(0)
   await expect(alert.locator('p')).toContainText('Start here.')
   await page.getByRole('radio', { name: /^Redo / }).click()
   await expect(alert.locator('ul li')).toContainText('Start here.')
+  await expect(source).toHaveValue(converted)
+  // setMarkdown ignores unchanged content. Load a distinct document first so
+  // restoring the alert exercises Markdown import rather than the existing DOM.
+  await source.fill('Temporary ordinary document')
+  await page.getByRole('button', { name: 'Load Markdown' }).click()
+  await expect(page.locator('[data-github-alert]')).toHaveCount(0)
+  await expect(page.locator('[contenteditable="true"]')).toHaveText('Temporary ordinary document')
+  await source.fill(converted)
   await page.getByRole('button', { name: 'Load Markdown' }).click()
   await expect(page.locator('[data-github-alert="NOTE"] ul li')).toContainText('Start here.')
+  await page.getByRole('button', { name: 'Read Markdown', exact: true }).click()
+  await expect(source).toHaveValue(converted)
 })
 
 test('toolbar type change retains focus and can continue editing', async ({ page }) => {
