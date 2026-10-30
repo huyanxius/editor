@@ -1,0 +1,61 @@
+name: Standalone GitHub alerts
+
+on:
+  push:
+    branches: [feat/github-alerts-standalone-20261028]
+    paths:
+      - packages/github-alerts/**
+      - .github/workflows/github-alerts.yml
+
+  pull_request:
+    branches: [review/github-alerts-baseline-20261028]
+    types: [opened, synchronize, reopened]
+    paths:
+      - packages/github-alerts/**
+      - .github/workflows/github-alerts.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-alerts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: >-
+      github.repository == 'huyanxius/editor' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'huyanxius/editor' &&
+        github.event.pull_request.head.ref == 'feat/github-alerts-standalone-20261028' &&
+        github.event.pull_request.base.ref == 'review/github-alerts-baseline-20261028'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/github-alerts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/github-alerts/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run demo:build
+      - run: npm run test:package
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: github-alerts-browser-results
+          path: packages/github-alerts/test-results
+          if-no-files-found: ignore

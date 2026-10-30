@@ -1,0 +1,72 @@
+{
+  "name": "mdx-editor-github-alerts",
+  "version": "0.0.0-development",
+  "private": true,
+  "description": "An independent GitHub-flavored alerts plugin for MDXEditor",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-style.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src test demo --ext .ts,.tsx",
+    "demo": "vite --host 127.0.0.1",
+    "test:browser": "playwright test",
+    "test:package": "node scripts/verify-package.mjs",
+    "demo:build": "vite build --outDir demo-dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "mdast-util-to-markdown": "^2.1.3",
+    "@types/mdast": "^4.0.4",
+    "mdast-util-from-markdown": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@mdxeditor/editor": "^4.3.4",
+    "@lexical/utils": "^0.48.0",
+    "lexical": "^0.48.0",
+    "react": "^18.2.0 || ^19.0.0",
+    "react-dom": "^18.2.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@mdxeditor/editor": "4.3.4",
+    "@lexical/utils": "0.48.0",
+    "@lexical/list": "0.48.0",
+    "lexical": "0.48.0",
+    "@playwright/test": "1.61.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.50.1",
+    "@typescript-eslint/parser": "^8.50.1",
+    "eslint": "^8.57.0",
+    "jsdom": "^23.0.1",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^1.6.1"
+  }
+}

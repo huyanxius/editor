@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022",
+      "ESNext.Disposable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "vite/client",
+      "@testing-library/jest-dom/vitest"
+    ]
+  },
+  "include": [
+    "src",
+    "test",
+    "demo",
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
+}
